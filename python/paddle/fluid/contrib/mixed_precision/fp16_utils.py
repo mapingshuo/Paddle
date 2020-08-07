@@ -117,8 +117,6 @@ def _insert_cast_op(block, op, idx, src_dtype, dest_dtype):
 
 
 def _move_op_to_end(block, op):
-    OPTIMIZE = core.op_proto_and_checker_maker.OpRole.Optimize
-    op._set_attr('op_role', OPTIMIZE)
     if op == block.ops[-1]:
         return
     new_op_desc = block.desc.append_op()
@@ -324,6 +322,7 @@ def update_role_var_grad(main_prog, params_grads):
             if op_for_fp16_grad.has_attr(op_role_var_attr_name):
                 attr_val.extend(op_for_fp16_grad.attr(op_role_var_attr_name))
             op_for_fp16_grad._set_attr(op_role_var_attr_name, attr_val)
+            op._set_attr('op_role', OPTIMIZE)
             _move_op_to_end(block, op)
 
         elif g.dtype == core.VarDesc.VarType.FP32 and op.type == 'sum':
@@ -332,8 +331,25 @@ def update_role_var_grad(main_prog, params_grads):
                 op_for_sum = find_true_prev_op(block.ops, op, input_name)
                 if op_for_sum.type == 'cast':
                     move_sum = True
+                    role = op_for_sum.attr('op_role')
+                    if role & int(BACKWARD) and op_for_sum.has_attr(
+                            'op_role_var'):
+                        op_for_sum.desc.remove_attr("op_role_var")
+                    fp16_grad_name = op_for_sum.input(op_for_sum.input_names[
+                        0])[0]
+                    op_for_fp16_grad = find_true_prev_op(block.ops, op_for_sum,
+                                                         fp16_grad_name)
+                    op_role_var_attr_name = \
+                        core.op_proto_and_checker_maker.kOpRoleVarAttrName()
+                    attr_val = [p.name, fp16_grad_name]
+                    if op_for_fp16_grad.has_attr(op_role_var_attr_name):
+                        attr_val.extend(
+                            op_for_fp16_grad.attr(op_role_var_attr_name))
+                    op_for_fp16_grad._set_attr(op_role_var_attr_name, attr_val)
+                    op_for_sum._set_attr('op_role', OPTIMIZE)
                     _move_op_to_end(block, op_for_sum)
             if move_sum:
+                op._set_attr('op_role', OPTIMIZE)
                 _move_op_to_end(block, op)
 
 
